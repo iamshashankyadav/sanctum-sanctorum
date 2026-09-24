@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.schemas import BookCreate, BookOut, BookPage, BookSort
+from app.schemas import BookCreate, BookOut, BookPage, BookSort, BookUpdate
 from app.services import books as service
 
 router = APIRouter(prefix="/books", tags=["books"])
@@ -42,5 +42,6 @@ def list_books(
 def get_book(book_id: int, db: Session = Depends(get_db)):
     return service.get_book(db, book_id)
 
-
-# TODO: expose PATCH /books/{book_id} (see SPEC.md)
+@router.patch("/{book_id}", response_model=BookOut)
+def patch_book(book_id: int, data: BookUpdate, db: Session = Depends(get_db)):
+    return service.update_book(db, book_id, data)
