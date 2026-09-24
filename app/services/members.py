@@ -3,10 +3,10 @@ from datetime import datetime
 from typing import List
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Member, MemberTier, Order
+from app.models import Loan, Member, MemberTier, Order, OrderStatus
 from app.schemas import MemberCreate, MemberStats
 
 # Tiers from lowest to highest; a member's rank is their index in this list.
@@ -23,7 +23,7 @@ RESTRICTED_MIN_TIER = MemberTier.MASTER.value
 
 def tier_at_least(tier: str, minimum: str) -> bool:
     """True if ``tier`` ranks at or above ``minimum``."""
-    return TIER_ORDER.index(tier) > TIER_ORDER.index(minimum)
+    return TIER_ORDER.index(tier) >= TIER_ORDER.index(minimum)
 
 
 def ensure_can_access_restricted(member: Member) -> None:
@@ -39,7 +39,9 @@ def create_member(db: Session, data: MemberCreate, now: datetime) -> Member:
 
     Rules: email (already stripped + lowercased) must be unique -> 409; created_at = now.
     """
-    # TODO: reject an email that is already in use with 409
+    existing = db.scalars(select(Member).where(Member.email == data.email)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="A member with this email already exists")
     member = Member(name=data.name, email=data.email, tier=data.tier.value, created_at=now)
     db.add(member)
     db.commit()
@@ -71,4 +73,37 @@ def get_member_stats(db: Session, member_id: int, now: datetime) -> MemberStats:
     - overdue_loans counts unreturned loans with now > due_at.
     - late_fees_cents sums late fees of returned loans.
     """
-    raise NotImplementedError("get_member_stats")
+    get_member(db, member_id)  # raises 404 if missing
+
+    paid_orders = db.scalars(
+        select(Order).where(
+            Order.member_id == member_id,
+            Order.status == OrderStatus.PAID.value,
+        )
+    ).all()
+    orders_paid = len(paid_orders)
+    total_spent_cents = sum(o.total_cents for o in paid_orders)
+
+    # All loans for this member.
+    all_loans = db.scalars(
+        select(Loan).where(Loan.member_id == member_id)
+    ).all()
+
+    active_loans = sum(1 for loan in all_loans if loan.returned_at is None)
+    # Boundary is strict: now > due_at means overdue (at exactly due_at it is still active).
+    overdue_loans = sum(
+        1 for loan in all_loans
+        if loan.returned_at is None and now > loan.due_at
+    )
+    late_fees_cents = sum(
+        loan.late_fee_cents for loan in all_loans if loan.returned_at is not None
+    )
+
+    return MemberStats(
+        member_id=member_id,
+        orders_paid=orders_paid,
+        total_spent_cents=total_spent_cents,
+        active_loans=active_loans,
+        overdue_loans=overdue_loans,
+        late_fees_cents=late_fees_cents,
+    )
