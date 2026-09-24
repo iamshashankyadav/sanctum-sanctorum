@@ -24,11 +24,19 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def normalize_isbn13(raw: str) -> str:
-    """Strip hyphens/spaces and verify the ISBN-13 checksum. Raises ValueError if invalid."""
+    """Strip hyphens/spaces and verify the ISBN-13 checksum. Raises ValueError if invalid.
+
+    Algorithm (SPEC.md): weights alternate 1, 3, 1, 3 … across the first 12 digits.
+    check_digit = (10 − (weighted_sum % 10)) % 10  — must equal the 13th digit.
+    """
     isbn = raw.replace("-", "").replace(" ", "")
     if len(isbn) != 13 or not isbn.isdigit():
         raise ValueError("isbn must contain exactly 13 digits")
-    # TODO: verify the ISBN-13 check digit (see SPEC.md)
+    weights = [1 if i % 2 == 0 else 3 for i in range(12)]
+    total = sum(int(d) * w for d, w in zip(isbn[:12], weights))
+    expected_check = (10 - (total % 10)) % 10
+    if expected_check != int(isbn[12]):
+        raise ValueError("isbn has an invalid check digit")
     return isbn
 
 
@@ -106,10 +114,15 @@ class MemberCreate(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        """Validate and normalize the email address."""
-        if not EMAIL_PATTERN.match(value):
+        """Strip whitespace, lowercase, then validate the email address.
+
+        Lowercasing here ensures the 409-duplicate check in the service
+        is case-insensitive by construction — the stored value is always lowercase.
+        """
+        normalized = value.strip().lower()
+        if not EMAIL_PATTERN.match(normalized):
             raise ValueError("email is not valid")
-        return value
+        return normalized
 
 
 class MemberOut(BaseModel):
