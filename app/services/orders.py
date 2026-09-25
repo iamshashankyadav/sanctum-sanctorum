@@ -137,4 +137,3 @@ def cancel_order(db: Session, order_id: int) -> Order:
     db.commit()
     db.refresh(order)
     return order
-
